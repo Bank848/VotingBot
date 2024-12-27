@@ -11,7 +11,10 @@
   "description": "",
   "dependencies": {
     "@discordjs/rest": "^2.4.0",
+    "@supabase/supabase-js": "^2.47.10",
     "discord-api-types": "^0.37.114",
-    "discord.js": "^14.16.3"
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7",
+    "mongodb": "^6.12.0"
   }
 }

@@ -1,0 +1,12 @@
+modules = ["nodejs-20"]
+run = "node bot.js"
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+run = ["sh", "-c", "node bot.js"]
+
+[[ports]]
+localPort = 8080
+externalPort = 80
