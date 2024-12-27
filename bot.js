@@ -1,12 +1,13 @@
 const { createClient } = require('@supabase/supabase-js');
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
+require('dotenv').config();
 
 // ดึงค่าจาก secret
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
 const guildId = process.env.GUILD_ID;
-const adminUserId = process.env.adminUserId;
-const adminSetPointUserId = process.env.Admin_setpoint;
+const adminUserId = process.env.ADMIN_USER_ID;
+const adminSetPointUserId = process.env.ADMIN_SETPOINT;
 const supabaseUrl = process.env.SUPABASE_URL; // URL ของ Supabase
 const supabaseKey = process.env.SUPABASE_KEY; // Supabase Key
 
@@ -192,23 +193,13 @@ const commands = [
         ],
     },
     {
-        name: 'setvoteplus',
-        description: 'Add points to a user or role',
+        name: 'uservoteplus',
+        description: 'Add points to a user',
         options: [
             {
-                name: 'target',
-                type: 3,
-                description: 'Select user or role to set the vote points for (user/role)',
-                required: true,
-                choices: [
-                    { name: 'User', value: 'user' },
-                    { name: 'Role', value: 'role' },
-                ],
-            },
-            {
-                name: 'user_or_role',
-                type: 6, 
-                description: 'The user or role to adjust votes for',
+                name: 'user',
+                type: 6, // เลือก user
+                description: 'The user to adjust votes for',
                 required: true,
             },
             {
@@ -220,23 +211,49 @@ const commands = [
         ],
     },
     {
-        name: 'setvoteminus',
-        description: 'Subtract points from a user or role (points will not go below 0)',
+        name: 'uservoteminus',
+        description: 'Subtract points from a user',
         options: [
             {
-                name: 'target',
-                type: 3,
-                description: 'Select user or role to set the vote points for (user/role)',
+                name: 'user',
+                type: 6, // เลือก user
+                description: 'The user to adjust votes for',
                 required: true,
-                choices: [
-                    { name: 'User', value: 'user' },
-                    { name: 'Role', value: 'role' },
-                ],
             },
             {
-                name: 'user_or_role',
-                type: 6, 
-                description: 'The user or role to adjust votes for',
+                name: 'points',
+                type: 4,
+                description: 'Points to subtract',
+                required: true,
+            },
+        ],
+    },
+    {
+        name: 'rolevoteplus',
+        description: 'Add points to a role',
+        options: [
+            {
+                name: 'role',
+                type: 8, // เลือก role
+                description: 'The role to adjust votes for',
+                required: true,
+            },
+            {
+                name: 'points',
+                type: 4,
+                description: 'Points to add',
+                required: true,
+            },
+        ],
+    },
+    {
+        name: 'rolevoteminus',
+        description: 'Subtract points from a role',
+        options: [
+            {
+                name: 'role',
+                type: 8, // เลือก role
+                description: 'The role to adjust votes for',
                 required: true,
             },
             {
@@ -294,16 +311,28 @@ client.once('ready', async () => {
     console.log('Bot data loaded:', userVotes, availableCharacters); // ตรวจสอบข้อมูลที่โหลดมาจากฐานข้อมูล
 });
 
-// การจัดการคำสั่ง (Commands)
 client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
 
-    const { commandName, member, user } = interaction;
+    const { commandName, user } = interaction;
 
     try {
+        // ตรวจสอบ interaction ก่อนที่มันจะหมดอายุ
+        if (!interaction.isRepliable()) {
+            await interaction.editReply({ content: "Interaction has expired, please try again.", ephemeral: true });
+            return;
+        }
+
+        // Deferred reply เพื่อหลีกเลี่ยงการหมดอายุ
+        await interaction.deferReply({ ephemeral: true });
+
+        // แสดงข้อความบอกว่าบอทกำลังคิดอยู่
+        await interaction.editReply('Connecting to DataBase... เซิฟหนูแรมน้อยโปรดเห็นใจหน่อยนะคะพี่ชาย<3...');
+
+        // การประมวลผลคำสั่ง
         switch(commandName) {
             case 'hello':
-                await interaction.reply('Hello, I am your bot!');
+                await interaction.editReply('Hello, I am your bot!');
                 break;
             case 'vote':
                 await handleVote(interaction, member, user);
@@ -311,11 +340,17 @@ client.on('interactionCreate', async interaction => {
             case 'active':
                 await handleActive(interaction, user);
                 break;
-            case 'setvoteplus':
-                await handleSetVotePlus(interaction, user);
+            case 'uservoteplus':
+                await handleUserVotePlus(interaction);
                 break;
-            case 'setvoteminus':
-                await handleSetVoteMinus(interaction, user);
+            case 'uservoteminus':
+                await handleUserVoteMinus(interaction);
+                break;
+            case 'rolevoteplus':
+                await handleRoleVotePlus(interaction);
+                break;
+            case 'rolevoteminus':
+                await handleRoleVoteMinus(interaction);
                 break;
             case 'setcharacters':
                 await handleSetCharacters(interaction, user);
@@ -330,13 +365,20 @@ client.on('interactionCreate', async interaction => {
                 await handleResetVotes(interaction);
                 break;
             default:
-                await interaction.reply("Unknown command");
+                await interaction.editReply("Unknown command");
         }
     } catch (error) {
         console.error("Error handling interaction:", error);
-        await interaction.reply("An error occurred while processing your command. Please try again later.");
+
+        // หาก interaction หมดอายุ ให้แจ้งผู้ใช้
+        if (error.code === 10062) {
+            await interaction.editReply("The interaction has expired or is invalid. Please try again.");
+        } else {
+            await interaction.editReply("An error occurred while processing your command. Please try again later.");
+        }
     }
 });
+
 
 async function handleLeaderboard(interaction) {
     try {
@@ -349,13 +391,13 @@ async function handleLeaderboard(interaction) {
         // ตรวจสอบ error
         if (error) {
             console.error("Error fetching leaderboard data from Supabase:", error);
-            await interaction.reply("An error occurred while fetching the leaderboard. Please try again later.");
+            await interaction.editReply("An error occurred while fetching the leaderboard. Please try again later.");
             return;
         }
 
         // ตรวจสอบกรณีไม่มีข้อมูล
         if (!data || data.length === 0) {
-            await interaction.reply("No characters available for the leaderboard yet. Please check back later.");
+            await interaction.editReply("No characters available for the leaderboard yet. Please check back later.");
             return;
         }
 
@@ -366,16 +408,16 @@ async function handleLeaderboard(interaction) {
         });
 
         // ส่งข้อความ
-        await interaction.reply(statusMessage);
+        await interaction.editReply(statusMessage);
     } catch (err) {
         console.error("Unexpected error in handleLeaderboard:", err);
-        await interaction.reply("An unexpected error occurred while generating the leaderboard. Please try again later.");
+        await interaction.editReply("An unexpected error occurred while generating the leaderboard. Please try again later.");
     }
 }
 
 async function handleVote(interaction, member, user) {
     if (!botActive) {
-        await interaction.reply("The bot is currently inactive. Please ask an admin to activate it.");
+        await interaction.editReply("The bot is currently inactive. Please ask an admin to activate it.");
         return;
     }
 
@@ -385,7 +427,7 @@ async function handleVote(interaction, member, user) {
     // Validate availableCharacters structure
     if (!availableCharacters || !Array.isArray(availableCharacters.data)) {
         console.error("Error: availableCharacters.data is not an array. Value:", availableCharacters);
-        await interaction.reply("There was an error loading the available characters.");
+        await interaction.editReply("There was an error loading the available characters.");
         return;
     }
 
@@ -393,7 +435,7 @@ async function handleVote(interaction, member, user) {
     const hasValidRole = userRoles.some(role => /^SS[1-9]$|^SS1[0-2]$/.test(role));
 
     if (!hasValidRole) {
-        await interaction.reply("Sorry, you need a valid role (SS1-SS12) to vote.");
+        await interaction.editReply("Sorry, you need a valid role (SS1-SS12) to vote.");
         return;
     }
 
@@ -405,12 +447,12 @@ async function handleVote(interaction, member, user) {
     const points = interaction.options.getInteger('points');
 
     if (!availableCharacters.data.some(characterObj => characterObj.character_name === character)) {
-        await interaction.reply(`The character "${character}" is not available for voting.`);
+        await interaction.editReply(`The character "${character}" is not available for voting.`);
         return;
     }
 
     if (userVotes[user.id].points < points) {
-        await interaction.reply("You do not have enough points to vote.");
+        await interaction.editReply("You do not have enough points to vote.");
         return;
     }
 
@@ -441,16 +483,16 @@ async function handleVote(interaction, member, user) {
         await saveCharacterPoints(character, points);
         await saveDataToDb();
 
-        await interaction.reply(`You have successfully voted for "${character}". New points: ${points}`);
+        await interaction.editReply(`You have successfully voted for "${character}". New points: ${points}`);
     } catch (error) {
         console.error("Error handling vote:", error);
-        await interaction.reply("An error occurred while saving your vote. Please try again.");
+        await interaction.editReply("An error occurred while saving your vote. Please try again.");
     }
 }
 
 async function handleActive(interaction, user) {
     if (user.id !== adminUserId) {
-        await interaction.reply("You do not have permission to activate/deactivate the bot.");
+        await interaction.editReply("You do not have permission to activate/deactivate the bot.");
         return;
     }
 
@@ -460,7 +502,7 @@ async function handleActive(interaction, user) {
     // บันทึกสถานะลงในฐานข้อมูล (หากต้องการ)
     await saveBotStatusToDb(botActive);  // สมมุติว่าเราใช้ฟังก์ชันนี้สำหรับบันทึกสถานะ
 
-    await interaction.reply(`The bot is now ${botActive ? 'active' : 'inactive'}.`);
+    await interaction.editReply(`The bot is now ${botActive ? 'active' : 'inactive'}.`);
 }
 
 // ฟังก์ชันที่ใช้สำหรับจัดการคำสั่ง 'mypoints'
@@ -470,72 +512,134 @@ async function handleMyPoints(interaction) {
 
     // ส่งข้อความตอบกลับ
     if (userPoints > 0) {
-        await interaction.reply(`You have ${userPoints} vote points available.`);
+        await interaction.editReply(`You have ${userPoints} vote points available.`);
     } else {
-        await interaction.reply("You currently have no vote points.");
+        await interaction.editReply("You currently have no vote points.");
     }
 }
 
-async function handleSetVotePlus(interaction) {
+async function handleUserVotePlus(interaction) {
+    const user = interaction.options.getUser('user');
+    const points = interaction.options.getInteger('points');
+
+    // ตรวจสอบว่าเป็นแอดมินหรือผู้ช่วยหรือไม่ (เช็กจากผู้สั่งการ)
     if (interaction.user.id !== adminUserId && interaction.user.id !== adminSetPointUserId) {
-        await interaction.reply("You do not have permission to set votes.");
+        await interaction.editReply('You do not have permission to modify votes.');
         return;
     }
 
-    const target = interaction.options.getString('target');
-    const userOrRole = interaction.options.getUser('user_or_role') || interaction.options.getRole('user_or_role');
-    const points = interaction.options.getInteger('points');
-
-    if (target === 'user') {
-        if (!userVotes[userOrRole.id]) {
-            userVotes[userOrRole.id] = { points: 0 };
-        }
-        userVotes[userOrRole.id].points = Math.min(userVotes[userOrRole.id].points + points, 9999);
-        await interaction.reply(`${userOrRole.username}'s vote points have been increased by ${points} points.`);
-    } else if (target === 'role') {
-        const membersWithRole = interaction.guild.members.cache.filter(member => member.roles.cache.has(userOrRole.id));
-        membersWithRole.forEach(async (member) => {
-            if (!userVotes[member.id]) {
-                userVotes[member.id] = { points: 0 };
-            }
-            userVotes[member.id].points = Math.min(userVotes[member.id].points + points, 9999);
-        });
-        await interaction.reply(`Votes for all members with the role ${userOrRole.name} have been increased by ${points} points.`);
+    if (!userVotes[user.id]) {
+        userVotes[user.id] = { points: 0 };
     }
+    userVotes[user.id].points = Math.min(userVotes[user.id].points + points, 9999);
+    await interaction.editReply(`${user.username}'s vote points have been increased by ${points} points.`);
 
     // Save updated points to the database
-    await saveDataToDb(); // Save all user vote data to the user_point table in Supabase
+    await saveDataToDb();
 }
 
-async function handleSetVoteMinus(interaction) {
+async function handleUserVoteMinus(interaction) {
+    const user = interaction.options.getUser('user');
+    const points = interaction.options.getInteger('points');
+
+    // ตรวจสอบว่าเป็นแอดมินหรือผู้ช่วยหรือไม่ (เช็กจากผู้สั่งการ)
     if (interaction.user.id !== adminUserId && interaction.user.id !== adminSetPointUserId) {
-        await interaction.reply("You do not have permission to set votes.");
+        await interaction.editReply('You do not have permission to modify votes.');
         return;
     }
 
-    const target = interaction.options.getString('target');
-    const userOrRole = interaction.options.getUser('user_or_role') || interaction.options.getRole('user_or_role');
-    const points = interaction.options.getInteger('points');
-
-    if (target === 'user') {
-        if (!userVotes[userOrRole.id]) {
-            userVotes[userOrRole.id] = { points: 0 };
-        }
-        userVotes[userOrRole.id].points = Math.max(userVotes[userOrRole.id].points - points, 0);
-        await interaction.reply(`${userOrRole.username}'s vote points have been decreased by ${points} points.`);
-    } else if (target === 'role') {
-        const membersWithRole = interaction.guild.members.cache.filter(member => member.roles.cache.has(userOrRole.id));
-        membersWithRole.forEach(async (member) => {
-            if (!userVotes[member.id]) {
-                userVotes[member.id] = { points: 0 };
-            }
-            userVotes[member.id].points = Math.max(userVotes[member.id].points - points, 0);
-        });
-        await interaction.reply(`Votes for all members with the role ${userOrRole.name} have been decreased by ${points} points.`);
+    if (!userVotes[user.id]) {
+        userVotes[user.id] = { points: 0 };
     }
+    userVotes[user.id].points = Math.max(userVotes[user.id].points - points, 0);
+    await interaction.editReply(`${user.username}'s vote points have been decreased by ${points} points.`);
 
     // Save updated points to the database
-    await saveDataToDb(); // Save all user vote data to the user_point table in Supabase
+    await saveDataToDb();
+}
+
+async function handleRoleVotePlus(interaction) {
+    const role = interaction.options.getRole('role');
+    const points = interaction.options.getInteger('points');
+
+    // ดึงข้อมูลสมาชิกทั้งหมดใหม่เพื่อให้แน่ใจว่าอัปเดตล่าสุด
+    const membersWithRole = await interaction.guild.members.fetch();
+    const filteredMembers = membersWithRole.filter(member => member.roles.cache.has(role.id));
+
+    const totalMembers = filteredMembers.size;
+    let processedMembers = 0;
+
+    // แจ้งจำนวนสมาชิกในยศก่อน
+    await interaction.editReply(`There are ${totalMembers} members with the role ${role.name}. Starting to update votes...`);
+
+    for (const member of filteredMembers.values()) {
+        if (!userVotes[member.id]) {
+            userVotes[member.id] = { points: 0 };
+        }
+
+        // อัปเดตคะแนนโหวต
+        userVotes[member.id].points = Math.min(userVotes[member.id].points + points, 9999);
+
+        // เพิ่มคนที่ทำเสร็จ
+        processedMembers++;
+
+        // แจ้งความคืบหน้า
+        await interaction.editReply(`Updated ${processedMembers}/${totalMembers} members. ${totalMembers - processedMembers} remaining...`);
+
+        // บันทึกข้อมูลลง Supabase
+        await saveDataToDb();  // บันทึกลงฐานข้อมูลหลังจากอัปเดตแต่ละคน
+
+        // ดีเลย์ 0.1 วินาที
+        await new Promise(resolve => setTimeout(resolve, 100));  // ดีเลย์ 0.1 วินาที
+    }
+
+    // แจ้งข้อความสุดท้ายเมื่อทำครบทั้งหมด
+    await interaction.editReply(`Votes for all ${totalMembers} members with the role ${role.name} have been increased by ${points} points.`);
+
+    // บันทึกข้อมูลลง Supabase หลังจากเสร็จสิ้น
+    await saveDataToDb();
+}
+
+async function handleRoleVoteMinus(interaction) {
+    const role = interaction.options.getRole('role');
+    const points = interaction.options.getInteger('points');
+
+    // ดึงข้อมูลสมาชิกทั้งหมดใหม่เพื่อให้แน่ใจว่าอัปเดตล่าสุด
+    const membersWithRole = await interaction.guild.members.fetch();
+    const filteredMembers = membersWithRole.filter(member => member.roles.cache.has(role.id));
+
+    const totalMembers = filteredMembers.size;
+    let processedMembers = 0;
+
+    // แจ้งจำนวนสมาชิกในยศก่อน
+    await interaction.editReply(`There are ${totalMembers} members with the role ${role.name}. Starting to update votes...`);
+
+    for (const member of filteredMembers.values()) {
+        if (!userVotes[member.id]) {
+            userVotes[member.id] = { points: 0 };
+        }
+
+        // อัปเดตคะแนนโหวต
+        userVotes[member.id].points = Math.max(userVotes[member.id].points - points, 0);
+
+        // เพิ่มคนที่ทำเสร็จ
+        processedMembers++;
+
+        // แจ้งความคืบหน้า
+        await interaction.editReply(`Updated ${processedMembers}/${totalMembers} members. ${totalMembers - processedMembers} remaining...`);
+
+        // บันทึกข้อมูลลง Supabase
+        await saveDataToDb();  // บันทึกลงฐานข้อมูลหลังจากอัปเดตแต่ละคน
+
+        // ดีเลย์ 2 วินาที
+        await new Promise(resolve => setTimeout(resolve, 100));  // ดีเลย์ 0.1 วินาที
+    }
+
+    // แจ้งข้อความสุดท้ายเมื่อทำครบทั้งหมด
+    await interaction.editReply(`Votes for all ${totalMembers} members with the role ${role.name} have been decreased by ${points} points.`);
+
+    // บันทึกข้อมูลลง Supabase หลังจากเสร็จสิ้น
+    await saveDataToDb();
 }
 
 // Save all user votes to Supabase
@@ -563,7 +667,7 @@ async function saveDataToDb() {
 // ฟังก์ชันสำหรับจัดการคำสั่ง 'setcharacters'
 async function handleSetCharacters(interaction, user) {
     if (user.id !== adminUserId && user.id !== adminSetPointUserId) {
-        await interaction.reply("You do not have permission to set characters.");
+        await interaction.editReply("You do not have permission to set characters.");
         return;
     }
 
@@ -593,10 +697,10 @@ async function handleSetCharacters(interaction, user) {
             .select('*')
             .eq('available', true);
 
-        await interaction.reply(`The characters have been updated: ${characterList.join(', ')}`);
+        await interaction.editReply(`The characters have been updated: ${characterList.join(', ')}`);
     } catch (error) {
         console.error("Error updating characters:", error);
-        await interaction.reply("An error occurred while setting characters. Please try again.");
+        await interaction.editReply("An error occurred while setting characters. Please try again.");
     }
 }
 
@@ -622,10 +726,10 @@ async function handleResetVotes(interaction) {
             throw new Error(charactersError.message);
         }
 
-        await interaction.reply('Votes and character data have been successfully reset. User points remain unchanged.');
+        await interaction.editReply('Votes and character data have been successfully reset. User points remain unchanged.');
     } catch (error) {
         console.error("Error resetting votes:", error);
-        await interaction.reply("An error occurred while resetting the data. Please try again later.");
+        await interaction.editReply("An error occurred while resetting the data. Please try again later.");
     }
 }
 
